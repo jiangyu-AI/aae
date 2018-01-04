@@ -48,7 +48,14 @@ parser.add_argument(
 parser.add_argument(
   '--model_dir',
   type=str,
-  default='./model',
+  default='./model_autoencoder',
+  #default='/scratch/jy1367/workspace/autoencoder/model',
+  help='directory where the trainded model is to be saved.')
+
+parser.add_argument(
+  '--model_pixelcnn_dir',
+  type=str,
+  default='./model_pixelcnn',
   #default='/scratch/jy1367/workspace/autoencoder/model',
   help='directory where the trainded model is to be saved.')
 
@@ -311,7 +318,7 @@ def train_pixelcnn( data_set,
     
     np.random.seed(random_seed)
     tf.set_random_seed(random_seed)
-    log_dir = os.path.join(os.path.dirname(model_dir),'model_pixelcnn')
+    #log_dir = os.path.join(os.path.dirname(model_dir),'model_pixelcnn')
     if data_set == 'mnist':
         input_height = 24
         input_width = 24
@@ -334,9 +341,9 @@ def train_pixelcnn( data_set,
     with tf.variable_scope('pixelcnn'):
         global_step = tf.Variable(0, trainable=False)
         learning_rate = learning_rate
-        height=28
-        width=28
-        channels=1
+        height=4
+        width=4
+        channels=3
         num_classes=10
         net = PixelCNN(learning_rate,global_step,grad_clip,height,width,channels,num_classes,num_layers,num_feature_maps)
         #net = PixelCNN(learning_rate,global_step,grad_clip,latent_data.size,hidden_channel,10,num_layers,num_feature_maps)
@@ -353,14 +360,14 @@ def train_pixelcnn( data_set,
     sess = tf.Session(config=config)
     sess.run(init_op)
     #q_net.load(sess,model_dir)
-    summary_writer = tf.summary.FileWriter(log_dir,sess.graph)
+    summary_writer = tf.summary.FileWriter(FLAGS.model_pixelcnn_dir,sess.graph)
     for step in tqdm(xrange(train_num),dynamic_ncols=True):
         batch_xs, batch_ys = mnist.train.next_batch(batch_size)
-        batch_xs = np.reshape(batch_xs,[-1,28,28,1])
-        #batch_xs, batch_ys = latent_data.data.train.next_batch(batch_size)
+        #batch_xs = np.reshape(batch_xs,[-1,28,28,1])
+        batch_xs, batch_ys = latent_data.data.train.next_batch(batch_size)
         it,loss,_ = sess.run([global_step,net.loss,net.train_op],feed_dict={net.X:batch_xs,net.h:batch_ys})
         if( it % save_interval == 0 ):
-            net.save(sess,log_dir,step=it)
+            net.save(sess,FLAGS.model_pixelcnn_dir,step=it)
         if( it % summary_interval == 0 ):
             tqdm.write('[%5d] Loss: %1.3f'%(it,loss))
             summary = sess.run(summary_op,feed_dict={net.X:batch_xs,net.h:batch_ys})
@@ -372,34 +379,28 @@ def train_pixelcnn( data_set,
             summary_writer.add_summary(
                 sess.run(sample_summary_op,feed_dict={sample_images:sampled_ims}),it)
         '''
-    net.save(sess,log_dir)
+    net.save(sess,FLAGS.model_pixelcnn_dir)
 
-
-
-def generate_samples():
+def restore_pixelcnn_and_sample(
+                                learning_rate,
+                                grad_clip,
+                                num_layers,
+                                num_feature_maps,
+                                ):
     tf.reset_default_graph()
     #pixelcnn = PixelCNN(learning_rate,global_step,grad_clip,latent_data.size,hidden_channel,10,num_layers,num_feature_maps)
+    global_step = tf.Variable(0, trainable=False)
     with tf.variable_scope('pixelcnn'):
-        #net = PixelCNN(learning_rate,global_step,grad_clip,height,width,channels,num_classes,num_layers,num_feature_maps)
-        pixelcnn = PixelCNN(None,
-                            None,
-                            None,
-                            4,
-                            4,
-                            3,
-                            10,
-                            FLAGS.num_layers,
-                            FLAGS.num_feature_maps,
-                            False)
-
+        pixelcnn = PixelCNN(lr=FLAGS.learning_rate,global_step=global_step,grad_clip=FLAGS.grad_clip,height=4,width=4,channels=3,num_classes=10,num_layers=FLAGS.num_layers,num_maps=FLAGS.num_feature_maps,is_training=False)
     init_op = tf.group(tf.global_variables_initializer(),
                        tf.local_variables_initializer())
     config = tf.ConfigProto()
     sess = tf.Session(config=config)
     #sess.graph.finalize()
     sess.run(init_op)
-    pixelcnn.load(sess,'/scratch/jy1367/workspace/autoencoder/model_pixelcnn/last.ckpt')
-    #samples_latent,log_probs = pixelcnn.sample_from_prior(sess,None,10)
+    pixelcnn.load(sess,FLAGS.model_pixelcnn_dir+'/last.ckpt')
+    sys.exit()
+    # generate samples
     samples_latent = pixelcnn.sample_from_prior(sess,np.arange(10),10)
     #print(len(sampled_zs))
     #print(len(sampled_zs[0]))
@@ -409,8 +410,9 @@ def generate_samples():
     save_images_mnist(samples_latent[:,:,1], FLAGS.results_dir+'/samples_latent_1.png')
     save_images_mnist(samples_latent[:,:,2], FLAGS.results_dir+'/samples_latent_2.png')
     print("Result saved in file: %s" % FLAGS.results_dir)
-
     decode_latent(samples_latent, FLAGS.results_dir+'/samples.png')
+
+
 
 
 if __name__ == '__main__':
@@ -419,7 +421,9 @@ if __name__ == '__main__':
     X_train, X_test = mnist.train.images, mnist.test.images
     #X_train, X_test = standard_scale(mnist.train.images, mnist.test.images)
 
+    '''
     train_autoencoder()
+    get_samples_autoencoder()
     transform_images2hidden()
     decode_latent_test()
     train_pixelcnn(FLAGS.data_set,
@@ -437,4 +441,11 @@ if __name__ == '__main__':
                 FLAGS.num_feature_maps,
                 FLAGS.summary_interval,
                 FLAGS.save_interval)
-    generate_samples()
+    '''
+    
+    restore_pixelcnn_and_sample(
+                                FLAGS.learning_rate,
+                                FLAGS.grad_clip,
+                                FLAGS.num_layers,
+                                FLAGS.num_feature_maps,
+                                ):
