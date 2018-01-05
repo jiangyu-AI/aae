@@ -119,6 +119,7 @@ class GatedCNN():
 
 
 class PixelCNN(object):
+        net = PixelCNN(learning_rate,global_step,grad_clip,height,width,channels,num_classes,num_layers,num_feature_maps)
     def __init__(self,
                  lr,
                  global_step,
@@ -181,8 +182,8 @@ class PixelCNN(object):
         '''
         self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.fc2, labels=self.X))
         '''
-        self.pred = tf.nn.sigmoid(self.fc2)
-
+        #self.pred = tf.nn.sigmoid(self.fc2)
+        self.pred = self.fc2
         loss_per_batch_point = tf.reduce_sum(tf.square(self.fc2 - self.X),axis=3)
         self.loss = tf.reduce_mean(loss_per_batch_point, axis=[0,1,2])
 

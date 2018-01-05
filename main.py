@@ -4,6 +4,7 @@ from __future__ import print_function
 
 import os
 import sys
+import pathlib
 import numpy as np
 import sklearn.preprocessing as prep
 import tensorflow as tf
@@ -205,6 +206,7 @@ def train_autoencoder():
 
     print("Total cost: " + str(autoencoder.calc_total_cost(X_test)))
 
+    pathlib.Path(FLAGS.model_dir).mkdir(parents=True, exist_ok=True) 
     save_path = autoencoder.save(FLAGS.model_dir)
     print("Model saved in file: %s" % save_path)
 
@@ -223,6 +225,7 @@ def get_samples_autoencoder():
     hidden = np.random.normal(size=[FLAGS.num_samples, 4,4,3])
     samples = autoencoder.generate(not_used, hidden)
     samples = np.reshape(samples,[-1,28,28])
+    pathlib.Path(FLAGS.results_dir).mkdir(parents=True, exist_ok=True) 
     save_images_mnist(samples, FLAGS.results_dir+'/samples_autoencoder.png')
     print("Result saved in file: %s" % FLAGS.results_dir)
 
@@ -249,7 +252,6 @@ def transform_images2hidden():
     recons = autoencoder.reconstruct(orig)
     orig = np.reshape(orig,[-1,28,28])
     recons = np.reshape(recons,[-1,28,28])
-    import pathlib
     pathlib.Path(FLAGS.results_dir).mkdir(parents=True, exist_ok=True) 
     save_images_mnist(orig, FLAGS.results_dir+'/origin.png')
     save_images_mnist(recons, FLAGS.results_dir+'/reconstruction.png')
@@ -421,31 +423,28 @@ if __name__ == '__main__':
     X_train, X_test = mnist.train.images, mnist.test.images
     #X_train, X_test = standard_scale(mnist.train.images, mnist.test.images)
 
-    '''
     train_autoencoder()
-    get_samples_autoencoder()
+    #get_samples_autoencoder()
     transform_images2hidden()
-    decode_latent_test()
-    train_pixelcnn(FLAGS.data_set,
-                FLAGS.random_seed,
-                FLAGS.model_dir,
-                FLAGS.train_num,
-                FLAGS.batch_size,
-                FLAGS.learning_rate,
-                FLAGS.decay_val,
-                FLAGS.decay_steps,
-                FLAGS.decay_staircase,
-                FLAGS.grad_clip,
-                FLAGS.hidden_channel,
-                FLAGS.num_layers,
-                FLAGS.num_feature_maps,
-                FLAGS.summary_interval,
-                FLAGS.save_interval)
-    '''
+    #decode_latent_test()
+    train_pixelcnn( FLAGS.data_set,
+                    FLAGS.random_seed,
+                    FLAGS.model_dir,
+                    FLAGS.train_num,
+                    FLAGS.batch_size,
+                    FLAGS.learning_rate,
+                    FLAGS.decay_val,
+                    FLAGS.decay_steps,
+                    FLAGS.decay_staircase,
+                    FLAGS.grad_clip,
+                    FLAGS.hidden_channel,
+                    FLAGS.num_layers,
+                    FLAGS.num_feature_maps,
+                    FLAGS.summary_interval,
+                    FLAGS.save_interval)
     
-    restore_pixelcnn_and_sample(
-                                FLAGS.learning_rate,
+    restore_pixelcnn_and_sample(FLAGS.learning_rate,
                                 FLAGS.grad_clip,
                                 FLAGS.num_layers,
-                                FLAGS.num_feature_maps,
-                                ):
+                                FLAGS.num_feature_maps)
+                                
