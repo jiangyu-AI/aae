@@ -26,6 +26,12 @@ parser.add_argument(
   help='Number of epochs to train.')
 
 parser.add_argument(
+    '--train_num',
+    type=int,
+    default=6,#0000,
+    help='200000 for cifar10, 60000 for mnist, num of trianing examples in one epoch')
+
+parser.add_argument(
   '--lr',
   type=float,
   default=0.001,
@@ -98,12 +104,6 @@ parser.add_argument(
     type=str,
     default='./log',
     help='Data set i.e. input data to train on')
-
-parser.add_argument(
-    '--train_num',
-    type=int,
-    default=6,#0000,
-    help='200000 for cifar10, 60000 for mnist, num of trianing examples in one epoch')
 
 parser.add_argument(
     '--learning_rate',

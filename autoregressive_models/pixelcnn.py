@@ -2,6 +2,7 @@
 
 import tensorflow as tf
 import numpy as np
+import sys
 
 def get_weights(shape, name, horizontal, mask_mode='noblind', mask=None):
     weights_initializer = tf.contrib.layers.xavier_initializer()
@@ -119,7 +120,6 @@ class GatedCNN():
 
 
 class PixelCNN(object):
-        net = PixelCNN(learning_rate,global_step,grad_clip,height,width,channels,num_classes,num_layers,num_feature_maps)
     def __init__(self,
                  lr,
                  global_step,
