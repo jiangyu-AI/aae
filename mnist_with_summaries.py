@@ -34,13 +34,72 @@ from tensorflow.examples.tutorials.mnist import input_data
 
 FLAGS = None
 
+class Conv2d(object) :
+    def __init__(self,name,input_dim,output_dim,k_h=4,k_w=4,d_h=2,d_w=2, # stride = 2
+                 stddev=0.02, data_format='NCHW') :
+        with tf.variable_scope(name) :
+            assert(data_format == 'NCHW' or data_format == 'NHWC')
+            self.w = tf.get_variable('w', [k_h, k_w, input_dim, output_dim],
+                                initializer=tf.truncated_normal_initializer(stddev=stddev))
+            self.b = tf.get_variable('b',[output_dim], initializer=tf.constant_initializer(0.0))
+            if( data_format == 'NCHW' ) :
+                self.strides = [1, 1, d_h, d_w]
+            else :
+                self.strides = [1, d_h, d_w, 1]
+            self.data_format = data_format
+    def __call__(self,input_var,name=None,w=None,b=None,**kwargs) :
+        w = w if w is not None else self.w
+        b = b if b is not None else self.b
+
+        if( self.data_format =='NCHW' ) :
+            return tf.nn.bias_add(
+                        tf.nn.conv2d(input_var, w,
+                                    use_cudnn_on_gpu=True,data_format='NCHW',
+                                    strides=self.strides, padding='SAME'),
+                        b,data_format='NCHW',name=name)
+        else :
+            return tf.nn.bias_add(
+                        tf.nn.conv2d(input_var, w,data_format='NHWC',
+                                    strides=self.strides, padding='SAME'),
+                        b,data_format='NHWC',name=name)
+    def get_variables(self):
+        return {'w':self.w,'b':self.b}
+
+class TransposedConv2d(object):
+    def __init__(self,name,input_dim,out_dim,
+                 k_h=4,k_w=4,d_h=2,d_w=2,stddev=0.02,data_format='NCHW') :
+        with tf.variable_scope(name) :
+            self.w = tf.get_variable('w', [k_h, k_w, out_dim, input_dim],
+                                initializer=tf.random_normal_initializer(stddev=stddev))
+            self.b = tf.get_variable('b',[out_dim], initializer=tf.constant_initializer(0.0))
+
+        self.data_format = data_format
+        if( data_format =='NCHW' ):
+            self.strides = [1, 1, d_h, d_w]
+        else:
+            self.strides = [1, d_h, d_w, 1]
+
+    def __call__(self,input_var,name=None,**xargs):
+        shapes = tf.shape(input_var)
+        if( self.data_format == 'NCHW' ):
+            shapes = tf.stack([shapes[0],tf.shape(self.b)[0],shapes[2]*2,shapes[3]*2])
+        else:
+            shapes = tf.stack([shapes[0],shapes[1]*2,shapes[2]*2,tf.shape(self.b)[0]])
+
+        return tf.nn.bias_add(
+            tf.nn.conv2d_transpose(input_var,self.w,output_shape=shapes,
+                                data_format=self.data_format,
+                                strides=self.strides,padding='SAME'),
+            self.b,data_format=self.data_format,name=name)
+
 
 def train():
   # Import data
   mnist = input_data.read_data_sets(FLAGS.data_dir,
                                     fake_data=FLAGS.fake_data)
 
-  sess = tf.InteractiveSession()
+  sess = tf.Session()
+  #sess = tf.InteractiveSession()
   # Create a multilayer model.
 
   # Input placeholders
@@ -98,12 +157,26 @@ def train():
       tf.summary.histogram('activations', activations)
       return activations
 
-  net = image_shaped_input
+  _x = image_shaped_input # _*28*28*1
 
-  hidden = nn_layer(x, 784, 500, 'layer1')
+  enc1 = Conv2d('enc1',1,16,data_format='NHWC')
+  _x = tf.nn.relu(enc1(_x)) # _*14*14*16
+  enc2 = Conv2d('enc2',16,32,data_format='NHWC')
+  _x = tf.nn.relu(enc2(_x)) # _*7*7*32 
+
+  hidden = _x
+
+  dec1 = TransposedConv2d('dec1',32,16,data_format='NHWC')
+  _x = tf.nn.relu(dec1(_x)) #_*14*14*16
+  dec2 = TransposedConv2d('dec2',16,1,data_format='NHWC')
+  _x = tf.nn.relu(dec2(_x)) #_*14*14*16
+  _x = tf.tanh(_x) # _*28*28*1
+  y = _x
+  with tf.name_scope('output_prereshape'):
+    tf.summary.image('output_prereshape', y, 2)
+  #hidden = nn_layer(x, 784, 500, 'layer1')
 
   '''
-  net = layers.conv2d_transpose(net, 64, [4, 4], stride=2)
   net = layers.fully_connected(net, 7 * 7 * 128)
   net = tf.reshape(net, [-1, 7, 7, 128])
   net = layers.conv2d_transpose(net, 64, [4, 4], stride=2)
@@ -112,6 +185,9 @@ def train():
   # ie [-1, 1].
   net = layers.conv2d(
     net, 1, [4, 4], normalizer_fn=None, activation_fn=tf.tanh)
+
+  '''
+  '''
   with tf.name_scope('dropout'):
     keep_prob = tf.placeholder(tf.float32)
     tf.summary.scalar('dropout_keep_probability', keep_prob)
@@ -120,7 +196,7 @@ def train():
 
   # Do not apply softmax activation yet, see below.
   #y = nn_layer(dropped, 500, 10, 'layer2', act=tf.identity)
-  y = nn_layer(hidden, 500, 784, 'layer2')
+  #y = nn_layer(hidden, 500, 784, 'layer2')
   with tf.name_scope('output_reshape'):
     image_shaped_output = tf.reshape(y, [-1, 28, 28, 1])
     tf.summary.image('output', image_shaped_output, 2)
@@ -140,7 +216,7 @@ def train():
     with tf.name_scope('total'):
       #cross_entropy = tf.losses.sparse_softmax_cross_entropy(
       #    labels=y_, logits=y)
-      loss = tf.losses.mean_squared_error(x,y)
+      loss = tf.losses.mean_squared_error(x,tf.reshape(y,[-1,784]))
   #tf.summary.scalar('cross_entropy', cross_entropy)
   tf.summary.scalar('loss', loss)
 
@@ -163,7 +239,7 @@ def train():
   merged = tf.summary.merge_all()
   train_writer = tf.summary.FileWriter(FLAGS.log_dir + '/train', sess.graph)
   test_writer = tf.summary.FileWriter(FLAGS.log_dir + '/test')
-  tf.global_variables_initializer().run()
+  sess.run(tf.global_variables_initializer())
 
   # Train the model, and also write summaries.
   # Every 10th step, measure test-set accuracy, and write test summaries
