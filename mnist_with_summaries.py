@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""A simple MNIST classifier which displays summaries in TensorBoard.
+"""
+based on mnist_with_summaries.py Jan 6 2018
+https://raw.githubusercontent.com/tensorflow/tensorflow/master/tensorflow/examples/tutorials/mnist/mnist_with_summaries.py
+A simple MNIST classifier which displays summaries in TensorBoard.
 
 This is an unimpressive MNIST model, but it is a good example of using
 tf.name_scope to make a graph legible in the TensorBoard graph explorer, and of
@@ -27,6 +30,7 @@ from __future__ import print_function
 import argparse
 import os
 import sys
+import numpy as np
 
 import tensorflow as tf
 
@@ -106,6 +110,8 @@ def train():
   with tf.name_scope('input'):
     x = tf.placeholder(tf.float32, [None, 784], name='x-input')
     y_ = tf.placeholder(tf.int64, [None], name='y-input')
+    tau = tf.placeholder(tf.float32, name='tau')
+    tf.summary.scalar('tau', tau)
 
   with tf.name_scope('input_reshape'):
     image_shaped_input = tf.reshape(x, [-1, 28, 28, 1])
@@ -159,22 +165,67 @@ def train():
 
   _x = image_shaped_input # _*28*28*1
 
+  # encode
   enc1 = Conv2d('enc1',1,16,data_format='NHWC')
   _x = tf.nn.relu(enc1(_x)) # _*14*14*16
   enc2 = Conv2d('enc2',16,32,data_format='NHWC')
   _x = tf.nn.relu(enc2(_x)) # _*7*7*32 
 
-  hidden = _x
+  # gumbel softmax
+  logits_y  = _x
+  def sampling(logits_y):
+      U = tf.random_uniform(tf.shape(logits_y), 0, 1)
+      y = logits_y - tf.log(-tf.log(U + 1e-20) + 1e-20) # logits + gumbel noise
+      y = tf.nn.softmax(y / tau)
+      #y = tf.nn.softmax(tf.reshape(y, (-1, N, M)) / self.tau)
+      #y = tf.reshape(y, (-1, N*M))
+      return y
+  z = sampling(logits_y)
+  hidden = z
+  #hidden = _x
+  _x = z
 
   dec1 = TransposedConv2d('dec1',32,16,data_format='NHWC')
   _x = tf.nn.relu(dec1(_x)) #_*14*14*16
   dec2 = TransposedConv2d('dec2',16,1,data_format='NHWC')
   _x = tf.nn.relu(dec2(_x)) #_*14*14*16
-  _x = tf.tanh(_x) # _*28*28*1
+  _x = tf.tanh(_x) # _*28*28*1 map values into range (-1,1)
   y = _x
   with tf.name_scope('output_prereshape'):
     tf.summary.image('output_prereshape', y, 2)
-  #hidden = nn_layer(x, 784, 500, 'layer1')
+
+  x_hat = _x
+
+  '''
+  def gumbel_loss(x, x_hat):
+      q_y = tf.reshape(logits_y, (-1, N, M))
+      q_y = tf.nn.softmax(q_y)
+      log_q_y = tf.log(q_y + 1e-20)
+      kl_tmp = q_y * (log_q_y - tf.log(1.0/M))
+      KL = tf.reduce_sum(kl_tmp, axis=(1, 2))
+      elbo = tf.reduce_sum(data_dim * tf.nn.sigmoid_cross_entropy_with_logits(labels=x, logits=x_hat))
+      elbo = elbo - KL 
+      return tf.reduce_sum(elbo)
+  '''
+
+  data_dim=784
+  D = 32
+  def gumbel_loss(x, x_hat):
+      q_y = logits_y
+      #q_y = tf.reshape(logits_y, (-1, N, M))
+      q_y = tf.nn.softmax(q_y)
+      log_q_y = tf.log(q_y + 1e-20)
+      kl_tmp = q_y * (log_q_y - tf.log(1.0/(D)))
+      KL = tf.reduce_sum(kl_tmp, axis=(1))
+      #KL = tf.reduce_sum(kl_tmp, axis=(1, 2))
+      elbo = tf.reduce_sum(data_dim * tf.nn.sigmoid_cross_entropy_with_logits(labels=image_shaped_input, logits=x_hat))
+      elbo = elbo - KL 
+      return tf.reduce_sum(elbo)
+  loss = gumbel_loss(x, x_hat)
+
+  #argmax_y = tf.reduce_max(tf.reshape(logits_y, (-1, N, M)), axis=-1, keep_dims=True)
+  #self.argmax_y = tf.equal(tf.reshape(logits_y, (-1, N, M)), argmax_y)
+
 
   '''
   net = layers.fully_connected(net, 7 * 7 * 128)
@@ -245,7 +296,7 @@ def train():
   # Every 10th step, measure test-set accuracy, and write test summaries
   # All other steps, run train_step on training data, & add training summaries
 
-  def feed_dict(train):
+  def feed_dict(train, tau_step):
     """Make a TensorFlow feed_dict: maps data onto Tensor placeholders."""
     if train or FLAGS.fake_data:
       xs, ys = mnist.train.next_batch(100, fake_data=FLAGS.fake_data)
@@ -254,27 +305,31 @@ def train():
       xs, ys = mnist.test.images, mnist.test.labels
       k = 1.0
     #return {x: xs, y_: ys, keep_prob: k}
-    return {x: xs, y_: ys}
+    return {x: xs, y_: ys, tau:tau_step}
 
+  anneal_rate = 0.0003
+  min_temperature = 0.5
+  tau_step = 5.0#, name="temperature")
   for i in range(FLAGS.max_steps):
-    if i % 10 == 0:  # Record summaries and test-set accuracy
-      summary, loss_ = sess.run([merged, loss], feed_dict=feed_dict(False))
+    tau_step = np.max([tau_step * np.exp(- anneal_rate * i/500), min_temperature])
+    if i % 100 == 0:  # Record summaries and test-set accuracy
+      summary, loss_ = sess.run([merged, loss], feed_dict=feed_dict(False,0.5))
       #summary, acc = sess.run([merged, accuracy], feed_dict=feed_dict(False))
       test_writer.add_summary(summary, i)
       print('Loss at step %s: %s' % (i, loss_))
     else:  # Record train set summaries, and train
-      if i % 100 == 99:  # Record execution stats
+      if i % 1000 == 99:  # Record execution stats
         run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
         run_metadata = tf.RunMetadata()
         summary, _ = sess.run([merged, train_step],
-                              feed_dict=feed_dict(True),
+                              feed_dict=feed_dict(True, tau_step),
                               options=run_options,
                               run_metadata=run_metadata)
         train_writer.add_run_metadata(run_metadata, 'step%03d' % i)
         train_writer.add_summary(summary, i)
         print('Adding run metadata for', i)
       else:  # Record a summary
-        summary, _ = sess.run([merged, train_step], feed_dict=feed_dict(True))
+        summary, _ = sess.run([merged, train_step], feed_dict=feed_dict(True,tau_step))
         train_writer.add_summary(summary, i)
   train_writer.close()
   test_writer.close()
@@ -292,7 +347,7 @@ if __name__ == '__main__':
   parser.add_argument('--fake_data', nargs='?', const=True, type=bool,
                       default=False,
                       help='If true, uses fake data for unit testing.')
-  parser.add_argument('--max_steps', type=int, default=1000,
+  parser.add_argument('--max_steps', type=int, default=10000,
                       help='Number of steps to run trainer.')
   parser.add_argument('--learning_rate', type=float, default=0.001,
                       help='Initial learning rate')
