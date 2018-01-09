@@ -1,5 +1,6 @@
 import tensorflow as tf
 import sys
+from commons.ops import *
 
 layers = tf.contrib.layers
 
@@ -9,63 +10,52 @@ class GumbelAutoencoder(object):
         self.n_input = n_input
         self.n_hidden = n_hidden
 
-        network_weights = self._initialize_weights()
-        self.weights = network_weights
-
-        # model
-
-        N = 30
-        M = 10 
         data_dim = 784
-
-        '''
-        self.fc1 = tf.layers.Dense(512, activation=tf.nn.relu)
-        self.fc2 = tf.layers.Dense(256, activation=tf.nn.relu)
-        self.fc3 = tf.layers.Dense(M*N)
-        self.fc4 = tf.layers.Dense(256, activation=tf.nn.relu)
-        self.fc5 = tf.layers.Dense(512, activation=tf.nn.relu)
-        self.fc6 = tf.layers.Dense(784)
-        '''
 
         self.x = tf.placeholder(tf.float32, [None, self.n_input])
         self.tau = tf.placeholder(tf.float32)
 
-        net = tf.reshape(self.x,[-1,28,28,1])
-        net = layers.conv2d(
-            net, 1, [4, 4], normalizer_fn=None, activation_fn=tf.tanh)
-        net = layers.fully_connected(noise, 1024)
-        if is_conditional:
-          net = tfgan.features.condition_tensor_from_onehot(net, one_hot_labels)
-        net = layers.fully_connected(net, 7 * 7 * 128)
-        net = tf.reshape(net, [-1, 7, 7, 128])
-        net = layers.conv2d_transpose(net, 64, [4, 4], stride=2)
-        net = layers.conv2d_transpose(net, 32, [4, 4], stride=2)
-        
-        # Make sure that generator output is in the same range as `inputs`
-        # ie [-1, 1].
-        net = layers.conv2d(
-            net, 1, [4, 4], normalizer_fn=None, activation_fn=tf.tanh)
-        logits_y  = self.fc3(self.fc2(self.fc1(self.x)))
-        def sampling(logits_y):
-            U = tf.random_uniform(tf.shape(logits_y), 0, 1)
-            y = logits_y - tf.log(-tf.log(U + 1e-20) + 1e-20) # logits + gumbel noise
-            y = tf.nn.softmax(tf.reshape(y, (-1, N, M)) / self.tau)
-            y = tf.reshape(y, (-1, N*M))
-            return y
-        z = sampling(logits_y)
-        self.x_hat = self.fc6(self.fc5(self.fc4(z)))
-        def gumbel_loss(x, x_hat):
-            q_y = tf.reshape(logits_y, (-1, N, M))
-            q_y = tf.nn.softmax(q_y)
-            log_q_y = tf.log(q_y + 1e-20)
-            kl_tmp = q_y * (log_q_y - tf.log(1.0/M))
-            KL = tf.reduce_sum(kl_tmp, axis=(1, 2))
-            elbo = tf.reduce_sum(data_dim * tf.nn.sigmoid_cross_entropy_with_logits(labels=x, logits=x_hat))
-            elbo = elbo - KL 
-            return tf.reduce_sum(elbo)
+        _x = tf.reshape(self.x,[-1,28,28,1])
+        # encode
+        enc1 = Conv2d('enc1',1,16,data_format='NHWC')
+        _x = tf.nn.relu(enc1(_x)) # _*14*14*16
+        enc2 = Conv2d('enc2',16,32,data_format='NHWC')
+        _x = tf.nn.relu(enc2(_x)) # _*7*7*32 
 
-        argmax_y = tf.reduce_max(tf.reshape(logits_y, (-1, N, M)), axis=-1, keep_dims=True)
-        self.argmax_y = tf.equal(tf.reshape(logits_y, (-1, N, M)), argmax_y)
+        # gumbel softmax
+        logits_y  = _x
+        def sampling(logits_y):
+          U = tf.random_uniform(tf.shape(logits_y), 0, 1)
+          y = logits_y - tf.log(-tf.log(U + 1e-20) + 1e-20) # logits + gumbel noise
+          y = tf.nn.softmax(y / tau)
+          #y = tf.nn.softmax(tf.reshape(y, (-1, N, M)) / self.tau)
+          #y = tf.reshape(y, (-1, N*M))
+          return y
+        z = sampling(logits_y)
+        tf.summary.histogram('sampling gumbel softmax',z)
+        tf.summary.tensor_summary('z',z)
+        self.hidden = z
+        _x = z
+
+        # decode _x and test _t
+        D = 32
+        argmax_logits = tf.argmax(logits_y, axis=-1)
+        latent_index = argmax_logits
+        _t = tf.one_hot(argmax_logits, D,axis=-1)
+
+        dec1 = TransposedConv2d('dec1',32,16,data_format='NHWC')
+        _x = tf.nn.relu(dec1(_x)) #_*14*14*16
+        _t = tf.nn.relu(dec1(_t))
+        dec2 = TransposedConv2d('dec2',16,1,data_format='NHWC')
+        _x = tf.nn.relu(dec2(_x)) #_*14*14*16
+        _t = tf.nn.relu(dec2(_t))
+        _x = tf.tanh(_x) # _*28*28*1 map values into range (-1,1)
+        _t = tf.tanh(_t)
+        y = _x
+        x_hat = _x
+        with tf.name_scope('output_prereshape'):
+        tf.summary.image('output_prereshape', y, 2)
+        tf.summary.image('output_prereshape_test', _t, 2)
 
 
         # sample from gaussian distribution
@@ -77,7 +67,8 @@ class GumbelAutoencoder(object):
         '''
 
         # cost
-        self.cost = gumbel_loss(self.x, self.x_hat)
+        self.cost = tf.losses.mean_squared_error(x,tf.reshape(x_hat,[-1,784]))
+        #self.cost = gumbel_loss(self.x, self.x_hat)
         '''
         reconstr_loss = 0.5 * tf.reduce_sum(tf.pow(tf.subtract(self.reconstruction, self.x), 2.0))
         latent_loss = -0.5 * tf.reduce_sum(1 + self.z_log_sigma_sq
